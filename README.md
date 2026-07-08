@@ -1,15 +1,15 @@
 # spot2am
 
-Paste a **public Spotify playlist link**, get an **Apple Music** playlist — without
-signing into Spotify. Built for the "I found a playlist online and want it in Apple
-Music" case.
+Paste a **public playlist link** and move it between **Spotify** and **Apple Music** —
+no login needed to read the source. Built for the "I found a playlist online and want
+it in my library" case. Works **both directions**.
 
 ```
 ./run.sh
 ```
 
-Then open **http://127.0.0.1:8787** (it opens automatically), paste a Spotify
-playlist URL, and hit **Convert**.
+Then open **http://127.0.0.1:8787** (it opens automatically), pick a direction with the
+toggle, paste a playlist URL, and hit **Convert**.
 
 ## How it works — and why it can't break on you
 
@@ -38,10 +38,26 @@ Three independent stages, each with a fallback, so you always get *something* us
 - **If the reader ever breaks** (Spotify tightens access): paste the playlist URL
   straight into TuneMyMusic, which reads it server-side.
 
+## The other direction: Apple Music → Spotify
+
+Flip the toggle to **Apple → Spotify** and paste a public
+`music.apple.com/…/playlist/…` link. It reads the Apple playlist with no login (from
+Apple's public page), then:
+
+- **With a Spotify token** (Settings): it matches each track on Spotify and creates the
+  playlist in your library.
+- **Without one:** it still reads the playlist and writes the CSV — upload that to
+  [TuneMyMusic](https://www.tunemymusic.com/transfer) to land it in Spotify.
+
+The one asymmetry: unlike Apple's months-long token, a **Spotify web-player token
+expires ~hourly**, so grab a fresh one right before transferring.
+
 ## Optional: one-click push setup
 
-No paid Apple Developer account needed. Grab two tokens from the web player once
-(they last months):
+No paid developer account needed for either service — grab the token(s) from the web
+player once.
+
+**For Spotify → Apple Music** (Apple tokens last months):
 
 1. Open `music.apple.com`, sign in.
 2. DevTools → **Network** tab → click any song.
@@ -49,21 +65,27 @@ No paid Apple Developer account needed. Grab two tokens from the web player once
 4. `authorization: Bearer <…>` → **Developer token**.
 5. `media-user-token: <…>` → **Media-user token**.
 
-Paste both into **Settings** in the app. Tokens are stored locally in
-`config.json` (gitignored) and never leave your machine except to Apple.
+**For Apple Music → Spotify** (token expires ~hourly):
+
+1. Open `open.spotify.com`, sign in.
+2. DevTools → **Network** tab → play a song.
+3. Open a request to `api.spotify.com` → **Headers**.
+4. `authorization: Bearer <…>` → **Spotify token**.
+
+Paste into **Settings** in the app. Tokens are stored locally in `config.json`
+(gitignored, `rw-------`) and never leave your machine except to Apple/Spotify.
 
 ## Safety
 
 - Runs only on `127.0.0.1` (your machine) — never exposed to the network.
 - A **local-only guard** refuses cross-origin / non-loopback requests, so a website you
   visit can't POST to the app (CSRF / DNS-rebinding).
-- Apple tokens live in `config.json` with `rw-------` (0600) permissions and are
-  gitignored — sent to no one but Apple.
+- Tokens live in `config.json` with `rw-------` (0600) permissions and are gitignored —
+  sent to no one but Apple/Spotify.
 - Song titles are HTML-escaped in the page; the CSV download is path-sanitized; all
   outbound calls are HTTPS.
-- Caveat: the catalog-search and push paths use the undocumented web-player tokens (no
-  paid Apple Developer account). If Apple rotates them, those two features fail cleanly
-  and fall back to the CSV.
+- Caveat: the match/push paths use the undocumented web-player tokens (no paid developer
+  account). If a service rotates them, those features fail cleanly and fall back to the CSV.
 
 ## Notes
 
