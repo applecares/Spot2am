@@ -19,8 +19,11 @@ from urllib.parse import urlparse
 
 from flask import Flask, Response, jsonify, render_template, request
 
-from spot2am import applemusic, csvout, matcher
+from spot2am import apple_read, applemusic, csvout, matcher, spotify_write
+from spot2am.apple_read import AppleReadError
 from spot2am.spotify import SpotifyReadError, read_playlist
+
+# Direction keys: "s2a" = Spotify -> Apple Music, "a2s" = Apple Music -> Spotify.
 
 BASE = Path(__file__).resolve().parent
 EXPORTS = BASE / "exports"
@@ -38,18 +41,17 @@ _LOCAL_HOSTS = {"127.0.0.1", "localhost"}
 
 @app.before_request
 def _local_only_guard():
-    """This app holds your Apple tokens and can create playlists, so refuse any
-    state-changing request that isn't same-origin from the loopback UI. Blocks a
-    website you happen to visit from POSTing to localhost (CSRF / DNS-rebinding).
+    """This app holds your tokens and can create playlists, so lock it to the
+    loopback UI. The Host check (every request, incl. GET /stream) blocks
+    DNS-rebinding; the Origin check on writes blocks cross-site POSTs (CSRF).
     """
-    if request.method not in ("POST", "PUT", "DELETE"):
-        return None
     host = (request.headers.get("Host") or "").rsplit(":", 1)[0]
     if host not in _LOCAL_HOSTS:
         return jsonify(ok=False, error="Blocked: non-local host."), 403
-    origin = request.headers.get("Origin")
-    if origin and (urlparse(origin).hostname or "") not in _LOCAL_HOSTS:
-        return jsonify(ok=False, error="Blocked: cross-origin request."), 403
+    if request.method in ("POST", "PUT", "DELETE"):
+        origin = request.headers.get("Origin")
+        if origin and (urlparse(origin).hostname or "") not in _LOCAL_HOSTS:
+            return jsonify(ok=False, error="Blocked: cross-origin request."), 403
     return None
 
 
@@ -62,7 +64,7 @@ def load_config() -> dict:
             return json.loads(CONFIG_PATH.read_text())
         except ValueError:
             pass
-    return {"bearer": "", "media_user_token": "", "country": "us"}
+    return {"bearer": "", "media_user_token": "", "country": "us", "spotify_token": ""}
 
 
 def save_config(cfg: dict) -> None:
@@ -78,10 +80,24 @@ def apple_ready(cfg: dict | None = None) -> bool:
     return bool(cfg.get("bearer") and cfg.get("media_user_token"))
 
 
-def build_searchers(cfg: dict):
-    """Ordered song-search sources for the matcher. The real Apple catalog goes
-    first when tokens are set (authoritative — finds songs the stale iTunes index
-    can't), with iTunes Search as the always-available fallback."""
+def spotify_ready(cfg: dict | None = None) -> bool:
+    cfg = cfg or load_config()
+    return bool(cfg.get("spotify_token"))
+
+
+def can_push(direction: str, cfg: dict) -> bool:
+    return spotify_ready(cfg) if direction == "a2s" else apple_ready(cfg)
+
+
+def build_searchers(cfg: dict, direction: str):
+    """Ordered song-search sources for the matcher, per direction.
+
+    Spotify -> Apple: the real Apple catalog first (when tokens are set), then the
+    always-available iTunes index. Apple -> Spotify: the Spotify catalog, which
+    needs a token — so with no token there is nothing to match against (the CSV
+    still works via TuneMyMusic)."""
+    if direction == "a2s":
+        return [spotify_write.searcher(cfg["spotify_token"])] if spotify_ready(cfg) else []
     country = cfg.get("country", "us")
     searchers = []
     if apple_ready(cfg):
@@ -101,28 +117,39 @@ def build_searchers(cfg: dict):
 def index():
     cfg = load_config()
     return render_template(
-        "index.html", apple_ready=apple_ready(cfg), country=cfg.get("country", "us")
+        "index.html",
+        apple_ready=apple_ready(cfg),
+        spotify_ready=spotify_ready(cfg),
+        country=cfg.get("country", "us"),
     )
 
 
 @app.post("/convert")
 def convert():
-    """Fast phase: read the playlist and return the track list right away, so the
-    UI can render every row in ~1s. Matching happens after, streamed via /stream."""
-    url = (request.json or {}).get("url", "")
+    """Fast phase: read the source playlist and return the track list right away,
+    so the UI renders every row in ~1s. Matching is streamed after, via /stream."""
+    body = request.json or {}
+    url = body.get("url", "")
+    direction = "a2s" if body.get("direction") == "a2s" else "s2a"
     try:
-        name, tracks, truncated = read_playlist(url)
-    except SpotifyReadError as e:
+        if direction == "a2s":
+            name, tracks, truncated = apple_read.read_playlist(url)
+        else:
+            name, tracks, truncated = read_playlist(url)
+    except (SpotifyReadError, AppleReadError) as e:
         return jsonify(ok=False, error=str(e)), 400
 
     job_id = uuid.uuid4().hex[:8]
-    JOBS[job_id] = {"name": name, "tracks": tracks, "apple_ids": [], "csv": None}
+    JOBS[job_id] = {"name": name, "tracks": tracks, "direction": direction, "ids": [], "csv": None}
+    cfg = load_config()
     return jsonify(
         ok=True,
         job_id=job_id,
         name=name,
+        direction=direction,
         truncated=truncated,
         count=len(tracks),
+        can_match=bool(build_searchers(cfg, direction)),
         tracks=[{"title": t.title, "artist": t.artist} for t in tracks],
     )
 
@@ -138,12 +165,13 @@ def stream(job_id):
             mimetype="text/event-stream",
         )
     cfg = load_config()
-    searchers = build_searchers(cfg)
+    direction = job.get("direction", "s2a")
+    searchers = build_searchers(cfg, direction)
 
     def events():
         rows = []
         for i, track in enumerate(job["tracks"]):
-            m = matcher.match_track(track, searchers)
+            m = matcher.match_track(track, searchers) if searchers else matcher.NO_MATCH
             rows.append((track, m))
             yield "data: " + json.dumps(
                 {
@@ -154,12 +182,13 @@ def stream(job_id):
                     "apple_artist": m.apple_artist,
                 }
             ) + "\n\n"
-            time.sleep(0.06)  # gentle spacing so iTunes doesn't throttle the burst
+            if searchers:
+                time.sleep(0.06)  # gentle spacing so the search API doesn't throttle
 
         fname = f"{csvout.safe_filename(job['name'])}-{job_id}.csv"
         (EXPORTS / fname).write_text(csvout.to_csv(rows), encoding="utf-8")
         matched = [(t, m) for t, m in rows if m.matched]
-        job["apple_ids"] = [m.apple_id for _, m in matched]
+        job["ids"] = [m.apple_id for _, m in matched]
         job["csv"] = fname
         yield "data: " + json.dumps(
             {
@@ -167,7 +196,8 @@ def stream(job_id):
                 "matched": len(matched),
                 "total": len(rows),
                 "csv_url": f"/download/{fname}",
-                "apple_ready": apple_ready(cfg),
+                "can_push": can_push(direction, cfg),
+                "matched_ran": bool(searchers),
             }
         ) + "\n\n"
 
@@ -197,27 +227,33 @@ def push():
     job = JOBS.get(job_id)
     if not job:
         return jsonify(ok=False, error="That conversion expired — run it again."), 400
-    if not job["apple_ids"]:
+    if not job["ids"]:
         return jsonify(ok=False, error="No matched songs to add."), 400
 
     cfg = load_config()
     try:
-        result = applemusic.create_playlist(
-            name=job["name"],
-            description="Imported from Spotify by spot2am",
-            apple_ids=job["apple_ids"],
-            bearer=cfg["bearer"],
-            user_token=cfg["media_user_token"],
-        )
-    except (applemusic.AppleAuthError, applemusic.AppleApiError) as e:
+        if job.get("direction") == "a2s":
+            r = spotify_write.create_playlist(
+                name=job["name"],
+                description="Imported from Apple Music by spot2am",
+                uris=job["ids"],
+                token=cfg["spotify_token"],
+            )
+            failed = len(r.failed)
+        else:
+            r = applemusic.create_playlist(
+                name=job["name"],
+                description="Imported from Spotify by spot2am",
+                apple_ids=job["ids"],
+                bearer=cfg["bearer"],
+                user_token=cfg["media_user_token"],
+            )
+            failed = len(r.failed_ids)
+    except (applemusic.AppleAuthError, applemusic.AppleApiError,
+            spotify_write.SpotifyAuthError, spotify_write.SpotifyApiError) as e:
         return jsonify(ok=False, error=str(e)), 400
 
-    return jsonify(
-        ok=True,
-        added=result.added,
-        failed=len(result.failed_ids),
-        playlist_url=result.playlist_url,
-    )
+    return jsonify(ok=True, added=r.added, failed=failed, playlist_url=r.playlist_url)
 
 
 @app.post("/settings")
@@ -226,6 +262,7 @@ def settings():
     cfg = load_config()
     cfg["bearer"] = body.get("bearer", cfg.get("bearer", "")).strip()
     cfg["media_user_token"] = body.get("media_user_token", cfg.get("media_user_token", "")).strip()
+    cfg["spotify_token"] = body.get("spotify_token", cfg.get("spotify_token", "")).strip()
     cfg["country"] = (body.get("country") or cfg.get("country") or "us").strip().lower()
     save_config(cfg)
 
@@ -235,7 +272,13 @@ def settings():
         if detected:
             cfg["country"] = detected
             save_config(cfg)
-    return jsonify(ok=True, apple_ready=apple_ready(cfg), country=cfg["country"], detected=detected)
+    return jsonify(
+        ok=True,
+        apple_ready=apple_ready(cfg),
+        spotify_ready=spotify_ready(cfg),
+        country=cfg["country"],
+        detected=detected,
+    )
 
 
 def _open_browser(url: str) -> None:

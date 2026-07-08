@@ -42,6 +42,10 @@ class Match:
         return self.apple_id is not None and self.confidence >= MATCH_THRESHOLD
 
 
+# Sentinel for "we couldn't even search" (reverse direction with no Spotify token).
+NO_MATCH = Match(None, None, None, None, 0.0)
+
+
 def _norm(s: str) -> str:
     s = (s or "").lower()
     s = _PAREN.sub(" ", s)

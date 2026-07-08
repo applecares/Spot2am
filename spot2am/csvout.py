@@ -11,15 +11,17 @@ import re
 
 _SAFE = re.compile(r"[^A-Za-z0-9._-]+")
 
+# Destination columns are direction-neutral ("Match…") since the CSV is used for
+# both Spotify -> Apple and Apple -> Spotify. Title, Artist lead for TuneMyMusic.
 HEADER = [
     "Title",
     "Artist",
     "Status",
-    "Apple Music Match",
-    "Apple Music Artist",
-    "Apple Music ID",
+    "Match",
+    "Match Artist",
+    "Match ID",
     "Confidence",
-    "Apple Music URL",
+    "Match URL",
 ]
 
 

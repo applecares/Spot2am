@@ -8,8 +8,6 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
 <style>
-  /* Shifsta system, calmed: one restrained blue accent, low-chroma semantics,
-     no neon fills, navy-tinted two-layer shadows, Geist. */
   :root {
     --bg: #ffffff; --surface: #ffffff; --surface-2: #f2f3f5;
     --fg: #14202e; --muted: #5b626b; --faint: #9aa0a8;
@@ -40,6 +38,11 @@
   header h1 b { color: var(--accent); }
   header p { color: var(--muted); margin: 4px 0 0; font-size: 14px; }
 
+  .seg { display: inline-flex; background: var(--surface-2); border-radius: var(--r-ctl); padding: 2px; }
+  .seg button { height: 32px; padding: 0 14px; font-size: 13px; font-weight: 500;
+    background: transparent; color: var(--muted); border: 0; border-radius: 8px; }
+  .seg button.on { background: var(--surface); color: var(--fg); box-shadow: var(--shadow); }
+
   .card { background: var(--surface); border-radius: var(--r); box-shadow: var(--shadow);
     outline: 1px solid var(--card-ring); outline-offset: -1px; }
   .pad { padding: 16px; }
@@ -49,8 +52,7 @@
     color: var(--fg); background: transparent; border: 1px solid var(--border);
     border-radius: var(--r-ctl); outline: none; transition: border-color .15s, box-shadow .15s; }
   input[type=text]::placeholder { color: var(--faint); }
-  input[type=text]:focus { border-color: var(--accent);
-    box-shadow: 0 0 0 3px var(--accent-soft); }
+  input[type=text]:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 
   .btn, button { font: 600 14px var(--sans); border: 1px solid transparent;
     border-radius: var(--r-ctl); height: 40px; padding: 0 16px; cursor: pointer;
@@ -68,7 +70,6 @@
     font-size: 13px; padding: 0 16px 16px; }
   .status.err { color: var(--fg); }
   .status[hidden] { display: none; }
-
   .spin { width: 13px; height: 13px; border: 2px solid var(--border);
     border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
@@ -78,22 +79,20 @@
   .summary { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
   .summary .name { font-size: 16px; font-weight: 600; letter-spacing: -.01em;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .summary .count { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums;
-    flex: none; }
+  .summary .count { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; flex: none; }
   .banner { margin-top: 12px; padding: 8px 12px; border-radius: var(--r-ctl);
     background: var(--surface-2); color: var(--muted); font-size: 13px; }
   .banner[hidden] { display: none; }
+  .banner a { color: var(--accent); }
 
   .bar { display: flex; align-items: center; justify-content: space-between; gap: 12px;
     margin-top: 16px; flex-wrap: wrap; }
-  .filter { display: inline-flex; background: var(--surface-2); border-radius: var(--r-ctl); padding: 2px; }
   .filter[hidden] { display: none; }
   .filter button { height: 30px; padding: 0 12px; font-size: 13px; font-weight: 500;
     background: transparent; color: var(--muted); border: 0; border-radius: 8px; }
   .filter button.on { background: var(--surface); color: var(--fg); box-shadow: var(--shadow); }
   .actions { display: inline-flex; gap: 8px; }
   .actions [hidden] { display: none; }
-
   .msg { margin-top: 12px; font-size: 13px; color: var(--muted); }
   .msg[hidden] { display: none; }
   .msg a { color: var(--accent); }
@@ -111,8 +110,7 @@
   .mark .spin { width: 13px; height: 13px; margin: 2px; }
   .t-main { min-width: 0; }
   .t-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .t-sub { color: var(--muted); font-size: 12.5px; white-space: nowrap;
-    overflow: hidden; text-overflow: ellipsis; }
+  .t-sub { color: var(--muted); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   a.find { width: 32px; height: 32px; display: grid; place-items: center; color: var(--muted);
     border-radius: 8px; }
   a.find svg { width: 16px; height: 16px; }
@@ -128,6 +126,7 @@
     background: var(--surface-2); color: var(--muted); }
   .pill.on { color: var(--ok); }
   details.settings .card { margin-top: 12px; }
+  .setblock[hidden] { display: none; }
   .note { color: var(--muted); font-size: 12.5px; margin: 0 0 12px; }
   .note a { color: var(--accent); }
   ol { color: var(--muted); font-size: 12.5px; padding-left: 18px; margin: 0 0 4px; line-height: 1.7; }
@@ -136,7 +135,6 @@
   label { display: block; font-size: 12px; color: var(--muted); margin: 12px 0 4px; }
   input.mono { font-family: var(--mono); font-size: 12.5px; }
   .save-row { display: flex; align-items: center; gap: 12px; margin-top: 16px; }
-
   footer { margin-top: 32px; color: var(--faint); font-size: 12px; }
 
   @media (prefers-reduced-motion: no-preference) {
@@ -149,10 +147,15 @@
 <div class="wrap">
   <header>
     <h1>spot<b>2am</b></h1>
-    <p>Spotify to Apple Music. No login.</p>
+    <p>Move a playlist between Spotify and Apple Music. No login to read.</p>
   </header>
 
-  <div class="card" style="margin-top:20px">
+  <div class="seg" id="dir" style="margin-top:16px">
+    <button data-d="s2a" class="on">Spotify → Apple</button>
+    <button data-d="a2s">Apple → Spotify</button>
+  </div>
+
+  <div class="card" style="margin-top:12px">
     <div class="field">
       <input id="url" type="text" placeholder="https://open.spotify.com/playlist/…"
              autocomplete="off" spellcheck="false" />
@@ -167,15 +170,16 @@
       <span class="count" id="pl-count"></span>
     </div>
     <div id="trunc" class="banner" hidden></div>
+    <div id="notoken" class="banner" hidden></div>
     <div class="bar">
-      <div class="filter" id="filter" hidden>
+      <div class="seg filter" id="filter" hidden>
         <button data-f="all" class="on">All</button>
         <button data-f="ok">Matched</button>
         <button data-f="miss">Missing</button>
       </div>
       <div class="actions">
         <a id="dl" class="btn primary" download hidden>Download</a>
-        <button id="push" class="btn ghost" hidden>Add to Apple Music</button>
+        <button id="push" class="btn ghost" hidden>Add</button>
       </div>
     </div>
     <div id="push-msg" class="msg" hidden></div>
@@ -185,24 +189,39 @@
   <details class="settings">
     <summary>
       <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
-      Apple Music <span id="pill" class="pill">off</span>
+      <span id="dest-name">Apple Music</span> <span id="pill" class="pill">off</span>
     </summary>
     <div class="card pad">
-      <p class="note">Optional. Better matching and one-click Add. Otherwise use the CSV with
-        <a href="https://www.tunemymusic.com/transfer" target="_blank" rel="noopener">TuneMyMusic</a>.</p>
-      <ol>
-        <li>Sign in at <code>music.apple.com</code>.</li>
-        <li>DevTools → Network → click a song.</li>
-        <li>Open a request to <code>amp-api.music.apple.com</code> → Headers.</li>
-        <li>Copy <code>authorization: Bearer …</code> → Developer token.</li>
-        <li>Copy <code>media-user-token</code> → Media-user token.</li>
-      </ol>
-      <label for="bearer">Developer token</label>
-      <input id="bearer" type="text" class="mono" placeholder="eyJhbGciOi…" autocomplete="off" />
-      <label for="mut">Media-user token</label>
-      <input id="mut" type="text" class="mono" placeholder="Au…==" autocomplete="off" />
-      <label for="country">Storefront</label>
-      <input id="country" type="text" placeholder="us" style="max-width:110px" value="{{ country }}" />
+      <div class="setblock" id="set-apple">
+        <p class="note">Optional. Better matching and one-click Add. Otherwise use the CSV with
+          <a href="https://www.tunemymusic.com/transfer" target="_blank" rel="noopener">TuneMyMusic</a>.</p>
+        <ol>
+          <li>Sign in at <code>music.apple.com</code>.</li>
+          <li>DevTools → Network → click a song.</li>
+          <li>Open a request to <code>amp-api.music.apple.com</code> → Headers.</li>
+          <li>Copy <code>authorization: Bearer …</code> → Developer token.</li>
+          <li>Copy <code>media-user-token</code> → Media-user token.</li>
+        </ol>
+        <label for="bearer">Developer token</label>
+        <input id="bearer" type="text" class="mono" placeholder="eyJhbGciOi…" autocomplete="off" />
+        <label for="mut">Media-user token</label>
+        <input id="mut" type="text" class="mono" placeholder="Au…==" autocomplete="off" />
+        <label for="country">Storefront</label>
+        <input id="country" type="text" placeholder="us" style="max-width:110px" value="{{ country }}" />
+      </div>
+      <div class="setblock" id="set-spotify" hidden>
+        <p class="note">Needed to match and create the Spotify playlist. The token expires
+          about hourly — grab it just before transferring. Otherwise use the CSV with
+          <a href="https://www.tunemymusic.com/transfer" target="_blank" rel="noopener">TuneMyMusic</a>.</p>
+        <ol>
+          <li>Sign in at <code>open.spotify.com</code>.</li>
+          <li>DevTools → Network → play a song.</li>
+          <li>Open a request to <code>api.spotify.com</code> → Headers.</li>
+          <li>Copy <code>authorization: Bearer …</code> → Spotify token.</li>
+        </ol>
+        <label for="spot">Spotify token</label>
+        <input id="spot" type="text" class="mono" placeholder="BQ…" autocomplete="off" />
+      </div>
       <div class="save-row"><button id="save" class="primary">Save</button>
         <span id="save-status" class="note" style="margin:0"></span></div>
     </div>
@@ -214,8 +233,9 @@
 <script>
 const $ = (s) => document.querySelector(s);
 let appleReady = {{ 'true' if apple_ready else 'false' }};
-let tracks = [];
-let currentJob = null;
+let spotifyReady = {{ 'true' if spotify_ready else 'false' }};
+let dir = "s2a";
+let tracks = [], currentJob = null, canMatch = true;
 
 const IC = {
   check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>',
@@ -223,10 +243,17 @@ const IC = {
   find: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/></svg>',
   spin: '<span class="spin"></span>',
 };
+const D = {
+  s2a: { placeholder: "https://open.spotify.com/playlist/…", dest: "Apple Music",
+         add: "Add to Apple Music", open: "Open in Apple Music", find: "Apple Music",
+         findUrl: (t) => "https://music.apple.com/search?term=" + encodeURIComponent(t) },
+  a2s: { placeholder: "https://music.apple.com/…/playlist/…", dest: "Spotify",
+         add: "Add to Spotify", open: "Open in Spotify", find: "Spotify",
+         findUrl: (t) => "https://open.spotify.com/search/" + encodeURIComponent(t) },
+};
+const destReady = () => (dir === "a2s" ? spotifyReady : appleReady);
 
-function esc(s) {
-  return (s ?? "").replace(/[&<>"]/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
-}
+function esc(s) { return (s ?? "").replace(/[&<>"]/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c])); }
 function status(msg, err) {
   const el = $("#status");
   if (!msg) { el.hidden = true; el.innerHTML = ""; return; }
@@ -234,111 +261,110 @@ function status(msg, err) {
   el.innerHTML = err ? esc(msg) : IC.spin + esc(msg);
 }
 function setPill() {
-  $("#pill").textContent = appleReady ? "connected" : "off";
-  $("#pill").className = "pill" + (appleReady ? " on" : "");
+  $("#dest-name").textContent = D[dir].dest;
+  $("#pill").textContent = destReady() ? "connected" : "off";
+  $("#pill").className = "pill" + (destReady() ? " on" : "");
+  $("#set-apple").hidden = dir !== "s2a";
+  $("#set-spotify").hidden = dir !== "a2s";
+  $("#push").textContent = D[dir].add;
+}
+function setDir(d) {
+  dir = d;
+  document.querySelectorAll("#dir button").forEach((b) => b.classList.toggle("on", b.dataset.d === d));
+  $("#url").placeholder = D[d].placeholder;
+  $("#url").value = "";
+  $("#result").hidden = true; status(null);
+  setPill();
 }
 
 async function convert() {
   const url = $("#url").value.trim();
   if (!url) { $("#url").focus(); return; }
-  $("#go").disabled = true;
-  $("#result").hidden = true;
-  status("Reading");
+  $("#go").disabled = true; $("#result").hidden = true; status("Reading");
   try {
     const r = await fetch("/convert", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url }),
+      body: JSON.stringify({ url, direction: dir }),
     });
     const d = await r.json();
     if (!d.ok) throw new Error(d.error);
     startMatching(d);
-  } catch (e) {
-    status(e.message || "Something went wrong.", true);
-    $("#go").disabled = false;
-  }
+  } catch (e) { status(e.message || "Something went wrong.", true); $("#go").disabled = false; }
 }
 
 function startMatching(d) {
-  tracks = d.tracks;
-  currentJob = d.job_id;
+  tracks = d.tracks; currentJob = d.job_id; canMatch = d.can_match;
   $("#pl-name").textContent = d.name;
-  $("#pl-count").textContent = `Matching 0/${d.count}`;
+  $("#pl-count").textContent = canMatch ? `Matching 0/${d.count}` : `${d.count} tracks`;
   $("#trunc").hidden = !d.truncated;
   if (d.truncated) $("#trunc").textContent = "First 100 tracks only — use TuneMyMusic for the rest.";
-  $("#filter").hidden = true;
-  $("#dl").hidden = true; $("#push").hidden = true; $("#push-msg").hidden = true;
+  $("#notoken").hidden = canMatch;
+  if (!canMatch) $("#notoken").innerHTML =
+    `Add a ${D[dir].dest} token in setup to match & create the playlist — or download the CSV for ` +
+    `<a href="https://www.tunemymusic.com/transfer" target="_blank" rel="noopener">TuneMyMusic</a>.`;
+  $("#filter").hidden = true; $("#dl").hidden = true; $("#push").hidden = true; $("#push-msg").hidden = true;
   const ul = $("#tracks"); ul.dataset.f = "all"; ul.innerHTML = "";
   d.tracks.forEach((t, i) => {
     const li = document.createElement("li");
-    li.id = "r" + i; li.dataset.status = "pending";
+    li.id = "r" + i; li.dataset.status = canMatch ? "pending" : "read";
     li.innerHTML =
-      `<span class="idx">${i + 1}</span><span class="mark">${IC.spin}</span>` +
+      `<span class="idx">${i + 1}</span><span class="mark">${canMatch ? IC.spin : ""}</span>` +
       `<span class="t-main"><div class="t-title">${esc(t.title)} — ${esc(t.artist)}</div>` +
       `<div class="t-sub"></div></span><span></span>`;
     ul.appendChild(li);
   });
-  status(null);
-  $("#result").hidden = false;
+  status(null); $("#result").hidden = false;
 
   let done = 0;
   const es = new EventSource(`/stream/${d.job_id}`);
   es.onmessage = (ev) => {
     const m = JSON.parse(ev.data);
     if (m.type === "match") {
-      applyMatch(m); done++;
-      $("#pl-count").textContent = `Matching ${done}/${d.count}`;
-    } else if (m.type === "done") {
-      es.close(); finish(m);
-    } else if (m.type === "error") {
-      es.close(); status(m.error, true); $("#go").disabled = false;
-    }
+      if (canMatch) { applyMatch(m); done++; $("#pl-count").textContent = `Matching ${done}/${d.count}`; }
+    } else if (m.type === "done") { es.close(); finish(m); }
+    else if (m.type === "error") { es.close(); status(m.error, true); $("#go").disabled = false; }
   };
   es.onerror = () => { es.close(); $("#go").disabled = false; };
 }
 
-// Ignore punctuation/separator noise ("," vs "&") — only flag real differences
-// like an "(Instrumental)" or remix that the source didn't ask for.
 function differs(a, b) {
   const n = (s) => (s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
   return n(a) !== n(b);
 }
-
 function applyMatch(m) {
   const li = $("#r" + m.i); if (!li) return;
-  const t = tracks[m.i];
-  const mark = li.querySelector(".mark");
-  const sub = li.querySelector(".t-sub");
-  const act = li.lastElementChild;
+  const t = tracks[m.i], mark = li.querySelector(".mark"), sub = li.querySelector(".t-sub"), act = li.lastElementChild;
   if (m.matched) {
-    li.dataset.status = "ok";
-    mark.innerHTML = IC.check;
+    li.dataset.status = "ok"; mark.innerHTML = IC.check;
     if (differs(m.apple_name, t.title) || differs(m.apple_artist, t.artist))
       sub.textContent = `${m.apple_name} · ${m.apple_artist}`;
   } else {
-    li.dataset.status = "miss";
-    mark.innerHTML = IC.dash;
-    const q = encodeURIComponent(`${t.title} ${t.artist}`);
-    act.outerHTML = `<a class="find" href="https://music.apple.com/search?term=${q}" ` +
-      `target="_blank" rel="noopener" aria-label="Search Apple Music">${IC.find}</a>`;
+    li.dataset.status = "miss"; mark.innerHTML = IC.dash;
+    const a = document.createElement("a");
+    a.className = "find"; a.target = "_blank"; a.rel = "noopener";
+    a.setAttribute("aria-label", "Search " + D[dir].find);
+    a.setAttribute("href", D[dir].findUrl(`${t.title} ${t.artist}`));
+    a.innerHTML = IC.find; act.replaceWith(a);
   }
 }
-
 function finish(m) {
-  $("#pl-count").textContent = `${m.matched}/${m.total} matched`;
+  if (canMatch) {
+    $("#pl-count").textContent = `${m.matched}/${m.total} matched`;
+    if (m.matched < m.total) $("#filter").hidden = false;
+    appleReady = dir === "s2a" ? m.can_push : appleReady;
+    spotifyReady = dir === "a2s" ? m.can_push : spotifyReady;
+    $("#push").hidden = !m.can_push;
+  }
   $("#dl").href = m.csv_url; $("#dl").hidden = false;
-  appleReady = m.apple_ready; setPill();
-  $("#push").hidden = !appleReady;
-  if (m.matched < m.total) $("#filter").hidden = false;
-  $("#go").disabled = false;
+  setPill(); $("#go").disabled = false;
 }
-
 function setFilter(f) {
   $("#tracks").dataset.f = f;
   document.querySelectorAll("#filter button").forEach((b) => b.classList.toggle("on", b.dataset.f === f));
 }
 
 async function push() {
-  $("#push").disabled = true; $("#push").textContent = "Adding…";
+  $("#push").disabled = true; const label = $("#push").textContent; $("#push").textContent = "Adding…";
   try {
     const r = await fetch("/push", {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -346,14 +372,16 @@ async function push() {
     });
     const d = await r.json();
     if (!d.ok) throw new Error(d.error);
-    $("#push-msg").hidden = false;
-    $("#push-msg").innerHTML = `Added ${d.added}. ` +
-      `<a href="${d.playlist_url}" target="_blank" rel="noopener">Open in Apple Music</a>`;
+    const box = $("#push-msg"); box.hidden = false;
+    box.textContent = `Added ${d.added}${d.failed ? ` (${d.failed} skipped)` : ""}. `;
+    const a = document.createElement("a");
+    a.target = "_blank"; a.rel = "noopener"; a.textContent = D[dir].open;
+    a.setAttribute("href", d.playlist_url);   // set as property, never interpolated into HTML
+    box.appendChild(a);
     $("#push").textContent = "Added";
   } catch (e) {
-    $("#push-msg").hidden = false;
-    $("#push-msg").textContent = e.message;
-    $("#push").textContent = "Add to Apple Music"; $("#push").disabled = false;
+    $("#push-msg").hidden = false; $("#push-msg").textContent = e.message;
+    $("#push").textContent = label; $("#push").disabled = false;
   }
 }
 
@@ -362,12 +390,15 @@ async function save() {
   try {
     const r = await fetch("/settings", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ bearer: $("#bearer").value, media_user_token: $("#mut").value, country: $("#country").value }),
+      body: JSON.stringify({
+        bearer: $("#bearer").value, media_user_token: $("#mut").value,
+        country: $("#country").value, spotify_token: $("#spot").value,
+      }),
     });
     const d = await r.json();
-    appleReady = d.apple_ready; setPill();
+    appleReady = d.apple_ready; spotifyReady = d.spotify_ready; setPill();
     if (d.detected) $("#country").value = d.detected;
-    $("#save-status").textContent = d.apple_ready ? `On · ${d.country}` : "Add both tokens";
+    $("#save-status").textContent = destReady() ? "On" : "Add the token above";
   } catch (e) { $("#save-status").textContent = "Couldn't save"; }
   finally { $("#save").disabled = false; }
 }
@@ -376,6 +407,7 @@ $("#go").addEventListener("click", convert);
 $("#url").addEventListener("keydown", (e) => { if (e.key === "Enter") convert(); });
 $("#push").addEventListener("click", push);
 $("#save").addEventListener("click", save);
+$("#dir").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) setDir(b.dataset.d); });
 $("#filter").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) setFilter(b.dataset.f); });
 setPill();
 </script>
