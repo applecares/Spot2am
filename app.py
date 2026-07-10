@@ -213,7 +213,7 @@ def stream(job_id):
     searchers = build_searchers(cfg, direction)
 
     def events():
-        rows = []
+        rows = job["rows"] = []  # kept on the job so manual fix-ups can edit them
         for i, track in enumerate(job["tracks"]):
             m = matcher.match_track(track, searchers) if searchers else matcher.NO_MATCH
             rows.append((track, m))
@@ -325,6 +325,84 @@ def push():
     return jsonify(
         ok=True, added=r.added, failed=failed, updated=updated, already=already,
         playlist_url=r.playlist_url,
+    )
+
+
+@app.post("/fixup/search")
+def fixup_search():
+    """Manual fix-up, step 1: search candidates for a row the matcher missed."""
+    body = request.json or {}
+    job = JOBS.get(body.get("job_id", ""))
+    if not job:
+        return jsonify(ok=False, error="That conversion expired — run it again."), 400
+    term = (body.get("term") or "").strip()
+    if not term:
+        return jsonify(ok=False, error="Type something to search for."), 400
+    searchers = build_searchers(load_config(), job.get("direction", "s2a"))
+    if not searchers:
+        return jsonify(ok=False, error="Add a token in Settings to search."), 400
+
+    cands, seen = [], set()
+    for search in searchers:
+        try:
+            results = search(term)
+        except Exception:  # throttled / auth / network — try the next source
+            continue
+        for c in results:
+            cid = str(c.get("trackId") or "")
+            if not cid or cid in seen:
+                continue
+            seen.add(cid)
+            cands.append(
+                {
+                    "id": cid,
+                    "name": c.get("trackName"),
+                    "artist": c.get("artistName"),
+                    "duration_ms": c.get("trackTimeMillis"),
+                    "url": c.get("trackViewUrl"),
+                }
+            )
+        if len(cands) >= 5:
+            break
+    return jsonify(ok=True, candidates=cands[:8])
+
+
+@app.post("/fixup/choose")
+def fixup_choose():
+    """Manual fix-up, step 2: pin a candidate to a row and refresh ids + CSV."""
+    body = request.json or {}
+    job = JOBS.get(body.get("job_id", ""))
+    if not job:
+        return jsonify(ok=False, error="That conversion expired — run it again."), 400
+    try:
+        i = int(body.get("i"))
+    except (TypeError, ValueError):
+        i = -1
+    rows = job.get("rows") or []
+    if not (0 <= i < len(rows)):
+        return jsonify(ok=False, error="That row isn't matched yet — give it a second."), 400
+    cid = str(body.get("id") or "").strip()
+    if not cid:
+        return jsonify(ok=False, error="No song selected."), 400
+
+    track, _ = rows[i]
+    m = matcher.Match(
+        apple_id=cid,
+        apple_name=(body.get("name") or "").strip() or None,
+        apple_artist=(body.get("artist") or "").strip() or None,
+        apple_url=(body.get("url") or "").strip() or None,
+        confidence=1.0,  # picked by hand
+    )
+    rows[i] = (track, m)
+    job["ids"] = [mm.apple_id for _, mm in rows if mm.matched]
+    if job.get("csv"):  # the failsafe CSV reflects the fix too
+        (EXPORTS / job["csv"]).write_text(csvout.to_csv(rows), encoding="utf-8")
+    return jsonify(
+        ok=True,
+        matched=sum(1 for _, mm in rows if mm.matched),
+        total=len(job["tracks"]),
+        name=m.apple_name,
+        artist=m.apple_artist,
     )
 
 

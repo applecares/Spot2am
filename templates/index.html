@@ -111,10 +111,26 @@
   .t-main { min-width: 0; }
   .t-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .t-sub { color: var(--muted); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  a.find { width: 32px; height: 32px; display: grid; place-items: center; color: var(--muted);
+  .find { width: 32px; height: 32px; display: grid; place-items: center; color: var(--muted);
     border-radius: 8px; }
-  a.find svg { width: 16px; height: 16px; }
-  a.find:hover { color: var(--accent); background: var(--surface-2); }
+  .find svg { width: 16px; height: 16px; }
+  .find:hover { color: var(--accent); background: var(--surface-2); }
+  button.find { height: 32px; padding: 0; border: 0; background: transparent; }
+
+  .fixer { grid-column: 1 / -1; margin: 2px 0 4px; }
+  .fixer[hidden] { display: none; }
+  .fixrow { display: flex; gap: 8px; }
+  .fixrow input { height: 34px; font-size: 13px; }
+  .fixrow button { height: 34px; padding: 0 12px; font-size: 13px; font-weight: 500; }
+  ul.cands { list-style: none; margin: 8px 0 6px; padding: 0; }
+  ul.cands li { display: block; padding: 0; border-bottom: 0; }
+  ul.cands button { width: 100%; height: auto; padding: 8px 10px; font-weight: 400; font-size: 13px;
+    background: transparent; border: 0; border-radius: 8px; display: flex;
+    justify-content: space-between; gap: 12px; text-align: left; }
+  ul.cands button:hover { background: var(--surface-2); }
+  .cand-artist { color: var(--muted); }
+  .cand-none { color: var(--muted); font-size: 12.5px; padding: 6px 2px; }
+  .fixer .out { font-size: 12.5px; color: var(--accent); }
 
   details.settings { margin-top: 24px; }
   details.settings > summary { list-style: none; cursor: pointer; display: flex;
@@ -235,7 +251,7 @@ const $ = (s) => document.querySelector(s);
 let appleReady = {{ 'true' if apple_ready else 'false' }};
 let spotifyReady = {{ 'true' if spotify_ready else 'false' }};
 let dir = "s2a";
-let tracks = [], currentJob = null, canMatch = true;
+let tracks = [], currentJob = null, canMatch = true, lastDone = null;
 
 const IC = {
   check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>',
@@ -293,7 +309,7 @@ async function convert() {
 }
 
 function startMatching(d) {
-  tracks = d.tracks; currentJob = d.job_id; canMatch = d.can_match;
+  tracks = d.tracks; currentJob = d.job_id; canMatch = d.can_match; lastDone = null;
   $("#pl-name").textContent = d.name;
   $("#pl-count").textContent = canMatch ? `Matching 0/${d.count}` : `${d.count} tracks`;
   $("#trunc").hidden = !d.truncated;
@@ -342,14 +358,104 @@ function applyMatch(m) {
       sub.textContent = `${m.apple_name} · ${m.apple_artist}`;
   } else {
     li.dataset.status = "miss"; mark.innerHTML = IC.dash;
-    const a = document.createElement("a");
-    a.className = "find"; a.target = "_blank"; a.rel = "noopener";
-    a.setAttribute("aria-label", "Search " + D[dir].find);
-    a.setAttribute("href", D[dir].findUrl(`${t.title} ${t.artist}`));
-    a.innerHTML = IC.find; act.replaceWith(a);
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "find";
+    b.setAttribute("aria-label", "Search & pick the right song");
+    b.title = "Search & pick the right song";
+    b.innerHTML = IC.find;
+    b.addEventListener("click", () => toggleFixer(m.i));
+    act.replaceWith(b);
   }
 }
+
+function fmtDur(ms) {
+  if (!ms) return "";
+  const s = Math.round(ms / 1000);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+function toggleFixer(i) {
+  const li = $("#r" + i); if (!li) return;
+  let fx = li.querySelector(".fixer");
+  if (fx) { fx.hidden = !fx.hidden; if (!fx.hidden) fx.querySelector("input").focus(); return; }
+  const t = tracks[i];
+  fx = document.createElement("div"); fx.className = "fixer";
+  const row = document.createElement("div"); row.className = "fixrow";
+  const inp = document.createElement("input");
+  inp.type = "text"; inp.spellcheck = false; inp.value = `${t.title} ${t.artist}`;
+  const go = document.createElement("button");
+  go.type = "button"; go.className = "ghost"; go.textContent = "Search";
+  row.append(inp, go);
+  const list = document.createElement("ul"); list.className = "cands";
+  const out = document.createElement("a");
+  out.className = "out"; out.target = "_blank"; out.rel = "noopener";
+  out.textContent = `Search on ${D[dir].find} ↗`;
+  out.setAttribute("href", D[dir].findUrl(`${t.title} ${t.artist}`));
+  fx.append(row, list, out);
+  li.appendChild(fx);
+  const run = () => fixSearch(i, inp.value.trim(), list, go);
+  go.addEventListener("click", run);
+  inp.addEventListener("keydown", (e) => { if (e.key === "Enter") run(); });
+  inp.focus();
+  run(); // search right away with the prefilled title + artist
+}
+function candNote(list, text) {
+  const li = document.createElement("li");
+  li.className = "cand-none"; li.textContent = text;
+  list.appendChild(li);
+}
+async function fixSearch(i, term, list, go) {
+  if (!term) return;
+  go.disabled = true; list.innerHTML = "";
+  try {
+    const r = await fetch("/fixup/search", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ job_id: currentJob, term }),
+    });
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error);
+    if (!d.candidates.length) candNote(list, "No results — try fewer words.");
+    d.candidates.forEach((c) => {
+      const row = document.createElement("li");
+      const b = document.createElement("button"); b.type = "button";
+      const main = document.createElement("span"); main.textContent = `${c.name || ""} `;
+      const art = document.createElement("span");
+      art.className = "cand-artist"; art.textContent = c.artist || "";
+      main.appendChild(art);
+      const dur = document.createElement("span");
+      dur.className = "cand-artist"; dur.textContent = fmtDur(c.duration_ms);
+      b.append(main, dur);
+      b.addEventListener("click", () => fixChoose(i, c));
+      row.appendChild(b); list.appendChild(row);
+    });
+  } catch (e) { candNote(list, e.message || "Search failed."); }
+  finally { go.disabled = false; }
+}
+async function fixChoose(i, c) {
+  try {
+    const r = await fetch("/fixup/choose", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ job_id: currentJob, i, id: c.id, name: c.name, artist: c.artist, url: c.url }),
+    });
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error);
+    const li = $("#r" + i);
+    li.dataset.status = "ok";
+    li.querySelector(".mark").innerHTML = IC.check;
+    li.querySelector(".t-sub").textContent = `${d.name || c.name} · ${d.artist || c.artist}`;
+    const fx = li.querySelector(".fixer"); if (fx) fx.remove();
+    const b = li.querySelector("button.find"); if (b) b.replaceWith(document.createElement("span"));
+    $("#pl-count").textContent = `${d.matched}/${d.total} matched`;
+    if (d.matched >= d.total) { setFilter("all"); $("#filter").hidden = true; }
+    if (lastDone && lastDone.can_push) {
+      // Re-enable Add: re-pushing re-syncs, so it only adds the new pick.
+      const p = $("#push");
+      p.hidden = false; p.disabled = false; p.textContent = D[dir].add;
+    }
+  } catch (e) { status(e.message || "Couldn't set that match.", true); }
+}
+
 function finish(m) {
+  lastDone = m;
   if (canMatch) {
     $("#pl-count").textContent = `${m.matched}/${m.total} matched`;
     if (m.matched < m.total) $("#filter").hidden = false;
