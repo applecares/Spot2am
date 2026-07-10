@@ -90,5 +90,9 @@ Paste into **Settings** in the app. Tokens are stored locally in `config.json`
 ## Notes
 
 - Everything runs locally. No accounts, no server it phones home to, no telemetry.
-- Only dependency is Flask; the rest is the Python standard library.
+- Needs Python 3.10+. Only dependency is Flask; the rest is the Python standard library.
 - `python3 -m unittest` runs the offline unit tests (URL parsing, matching, CSV, catalog).
+
+## License
+
+[MIT](LICENSE).
