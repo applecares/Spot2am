@@ -1,37 +1,43 @@
 # spot2am
 
-Paste a **public playlist link** and move it between **Spotify** and **Apple Music** —
-no login needed to read the source. Built for the "I found a playlist online and want
-it in my library" case. Works **both directions**.
+Paste a **public playlist, album, or track link** and move it between **Spotify** and
+**Apple Music** — no login needed to read the source. Built for the "I found a playlist
+online and want it in my library" case. Works **both directions**.
 
 ```
 ./run.sh
 ```
 
 Then open **http://127.0.0.1:8787** (it opens automatically), pick a direction with the
-toggle, paste a playlist URL, and hit **Convert**.
+toggle, paste a playlist / album / track URL, and hit **Convert**.
 
 ## How it works — and why it can't break on you
 
 Three independent stages, each with a fallback, so you always get *something* usable:
 
-1. **Read the playlist — no Spotify account.** Parses Spotify's public embed page
-   (`open.spotify.com/embed/playlist/…`). No login, no API key.
-   *Limit:* the embed returns at most **100 tracks**; longer playlists are flagged.
+1. **Read the source — no Spotify account.** Parses Spotify's public embed page
+   (`open.spotify.com/embed/…` — playlists, albums, and single tracks). No login, no
+   API key. *Limit:* the embed returns at most **100 tracks** — but if you've saved a
+   Spotify token (Settings), long playlists are re-read in full through the official
+   API; without one they're flagged.
 2. **Match to Apple Music.** Two sources, tried in order: the **Apple Music catalog**
    (authoritative — used when your tokens are set; finds stylized or brand-new titles
    the free lookup can't, e.g. Bad Bunny's "DtMF"), falling back to Apple's free
    **iTunes Search API**. Matching is conservative — only a confident title+artist
    match counts, and a matching title with a totally different artist (covers, KIDZ
-   BOP, karaoke) is refused unless the duration also lines up. The rest are flagged so
-   you can add those few by hand.
+   BOP, karaoke) is refused unless the duration also lines up. The rest are flagged —
+   and each flagged row has a **fix-up search** right in the app: search the same
+   sources yourself and click the right song to pin it.
 3. **A CSV is written every run** (`exports/…csv`) *before* anything else can fail.
-   This is your permanent backup and your universal fallback.
+   This is your permanent backup and your universal fallback. Manual fix-ups are
+   written back into it.
 
 ### Landing the playlist in Apple Music — two ways
 
 - **One-click push** (optional setup, below): creates the playlist directly in your
-  library.
+  library. **Pushing the same link again re-syncs instead of duplicating** — the app
+  remembers where each source landed (`sync_map.json`, local and gitignored) and adds
+  only the songs that are missing; if you deleted the playlist, a fresh one is created.
 - **CSV fallback** (always works): upload the CSV to
   [TuneMyMusic](https://www.tunemymusic.com/transfer) → choose **File** as the source
   → connect Apple Music. Free up to 500 tracks.
@@ -40,9 +46,8 @@ Three independent stages, each with a fallback, so you always get *something* us
 
 ## The other direction: Apple Music → Spotify
 
-Flip the toggle to **Apple → Spotify** and paste a public
-`music.apple.com/…/playlist/…` link. It reads the Apple playlist with no login (from
-Apple's public page), then:
+Flip the toggle to **Apple → Spotify** and paste a public `music.apple.com` playlist,
+album, or song link. It reads the tracks with no login (from Apple's public page), then:
 
 - **With a Spotify token** (Settings): it matches each track on Spotify and creates the
   playlist in your library.
