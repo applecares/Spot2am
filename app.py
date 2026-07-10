@@ -28,6 +28,7 @@ from spot2am.spotify import SpotifyReadError, parse_link, read_link
 BASE = Path(__file__).resolve().parent
 EXPORTS = BASE / "exports"
 CONFIG_PATH = BASE / "config.json"
+SYNC_MAP_PATH = BASE / "sync_map.json"  # source link -> playlist we created (gitignored)
 EXPORTS.mkdir(exist_ok=True)
 
 app = Flask(__name__)
@@ -73,6 +74,31 @@ def save_config(cfg: dict) -> None:
         os.chmod(CONFIG_PATH, 0o600)
     except OSError:
         pass
+
+
+def load_sync_map() -> dict:
+    if SYNC_MAP_PATH.exists():
+        try:
+            return json.loads(SYNC_MAP_PATH.read_text())
+        except ValueError:
+            pass
+    return {}
+
+
+def save_sync_map(m: dict) -> None:
+    SYNC_MAP_PATH.write_text(json.dumps(m, indent=2))
+
+
+def sync_key(direction: str, url: str) -> str | None:
+    """Stable ``direction:source-id`` key, or None when the url can't be keyed
+    (never the case after a successful read — this is belt-and-braces)."""
+    try:
+        if direction == "a2s":
+            return f"a2s:{apple_read.link_key(url)}"
+        kind, sid = parse_link(url)
+        return f"s2a:{kind}:{sid}"
+    except (SpotifyReadError, AppleReadError):
+        return None
 
 
 def apple_ready(cfg: dict | None = None) -> bool:
@@ -152,7 +178,14 @@ def convert():
                 pass  # keep the embed's first 100; the banner still flags the cap
 
     job_id = uuid.uuid4().hex[:8]
-    JOBS[job_id] = {"name": name, "tracks": tracks, "direction": direction, "ids": [], "csv": None}
+    JOBS[job_id] = {
+        "name": name,
+        "tracks": tracks,
+        "direction": direction,
+        "sync_key": sync_key(direction, url),
+        "ids": [],
+        "csv": None,
+    }
     return jsonify(
         ok=True,
         job_id=job_id,
@@ -242,29 +275,57 @@ def push():
         return jsonify(ok=False, error="No matched songs to add."), 400
 
     cfg = load_config()
+    key = job.get("sync_key")
+    smap = load_sync_map()
+    prior = smap.get(key) if key else None
+    updated, already = False, 0
     try:
         if job.get("direction") == "a2s":
-            r = spotify_write.create_playlist(
-                name=job["name"],
-                description="Imported from Apple Music by spot2am",
-                uris=job["ids"],
-                token=cfg["spotify_token"],
-            )
+            token = cfg["spotify_token"]
+            if prior and spotify_write.playlist_exists(prior["playlist_id"], token):
+                # Re-sync: same source pushed before — add only what's missing.
+                existing = spotify_write.playlist_track_uris(prior["playlist_id"], token)
+                new = [u for u in job["ids"] if u not in existing]
+                already = len(job["ids"]) - len(new)
+                r = spotify_write.add_to_playlist(prior["playlist_id"], new, token)
+                updated = True
+            else:
+                r = spotify_write.create_playlist(
+                    name=job["name"],
+                    description="Imported from Apple Music by spot2am",
+                    uris=job["ids"],
+                    token=token,
+                )
             failed = len(r.failed)
         else:
-            r = applemusic.create_playlist(
-                name=job["name"],
-                description="Imported from Spotify by spot2am",
-                apple_ids=job["ids"],
-                bearer=cfg["bearer"],
-                user_token=cfg["media_user_token"],
-            )
+            bearer, mut = cfg["bearer"], cfg["media_user_token"]
+            if prior and applemusic.playlist_exists(prior["playlist_id"], bearer, mut):
+                existing = applemusic.playlist_catalog_ids(prior["playlist_id"], bearer, mut)
+                new = [i for i in job["ids"] if i not in existing]
+                already = len(job["ids"]) - len(new)
+                r = applemusic.add_to_playlist(prior["playlist_id"], new, bearer, mut)
+                updated = True
+            else:
+                r = applemusic.create_playlist(
+                    name=job["name"],
+                    description="Imported from Spotify by spot2am",
+                    apple_ids=job["ids"],
+                    bearer=bearer,
+                    user_token=mut,
+                )
             failed = len(r.failed_ids)
     except (applemusic.AppleAuthError, applemusic.AppleApiError,
             spotify_write.SpotifyAuthError, spotify_write.SpotifyApiError) as e:
         return jsonify(ok=False, error=str(e)), 400
 
-    return jsonify(ok=True, added=r.added, failed=failed, playlist_url=r.playlist_url)
+    if key:  # remember where this source landed, so a re-run updates in place
+        smap[key] = {"playlist_id": r.playlist_id, "playlist_url": r.playlist_url, "name": job["name"]}
+        save_sync_map(smap)
+
+    return jsonify(
+        ok=True, added=r.added, failed=failed, updated=updated, already=already,
+        playlist_url=r.playlist_url,
+    )
 
 
 @app.post("/settings")

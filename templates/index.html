@@ -375,12 +375,15 @@ async function push() {
     const d = await r.json();
     if (!d.ok) throw new Error(d.error);
     const box = $("#push-msg"); box.hidden = false;
-    box.textContent = `Added ${d.added}${d.failed ? ` (${d.failed} skipped)` : ""}. `;
+    const base = d.updated
+      ? (d.added ? `Updated — ${d.added} new added${d.already ? `, ${d.already} already there` : ""}` : "Already up to date")
+      : `Added ${d.added}`;
+    box.textContent = `${base}${d.failed ? ` (${d.failed} skipped)` : ""}. `;
     const a = document.createElement("a");
     a.target = "_blank"; a.rel = "noopener"; a.textContent = D[dir].open;
     a.setAttribute("href", d.playlist_url);   // set as property, never interpolated into HTML
     box.appendChild(a);
-    $("#push").textContent = "Added";
+    $("#push").textContent = d.updated ? "Updated" : "Added";
   } catch (e) {
     $("#push-msg").hidden = false; $("#push-msg").textContent = e.message;
     $("#push").textContent = label; $("#push").disabled = false;

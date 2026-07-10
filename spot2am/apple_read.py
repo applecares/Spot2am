@@ -66,6 +66,17 @@ def valid_url(url_or: str) -> str:
     return parse_link(url_or)[1]
 
 
+def link_key(url_or: str) -> str:
+    """A stable id for the link — same source, same key, however it's pasted
+    (country prefix and slug vary). Used to remember source → pushed playlist."""
+    kind, url, song_id = parse_link(url_or)
+    if kind == "playlist":
+        return _PLID_RE.search(url).group(0)
+    if song_id:
+        return song_id
+    return _NUM_ID_RE.search(url).group(1)
+
+
 def _playlist_name(html: str) -> str:
     m = _LD_RE.search(html)
     if m:

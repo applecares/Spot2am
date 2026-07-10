@@ -29,6 +29,10 @@ class SpotifyAuthError(Exception):
 class SpotifyApiError(Exception):
     """Spotify refused the request. Message is safe to show."""
 
+    def __init__(self, message: str, code: int | None = None):
+        super().__init__(message)
+        self.code = code  # HTTP status, when there was one
+
 
 @dataclass
 class WriteResult:
@@ -60,7 +64,7 @@ def _request(method: str, path: str, token: str, body: dict | None = None, timeo
                 "Spotify rejected the token (web tokens expire about hourly). Grab a "
                 "fresh one from open.spotify.com and save it again."
             ) from e
-        raise SpotifyApiError(f"Spotify error {e.code}: {detail}") from e
+        raise SpotifyApiError(f"Spotify error {e.code}: {detail}", code=e.code) from e
     except Exception as e:
         raise SpotifyApiError(f"Couldn't reach Spotify ({e}).") from e
 
@@ -169,13 +173,57 @@ def create_playlist(name: str, description: str, uris: list[str], token: str) ->
     if not pid:
         raise SpotifyApiError("Spotify didn't return a playlist id.")
 
+    added, failed = _add_tracks(pid, uris, token)
+    url = (created.get("external_urls") or {}).get("spotify") or f"https://open.spotify.com/playlist/{pid}"
+    return WriteResult(pid, url, added, failed)
+
+
+def _add_tracks(playlist_id: str, uris: list[str], token: str) -> tuple[int, list]:
     added, failed = 0, []
     for chunk in _chunks(uris, _ADD_CHUNK):
         try:
-            _request("POST", f"/playlists/{pid}/tracks", token, {"uris": chunk})
+            _request("POST", f"/playlists/{playlist_id}/tracks", token, {"uris": chunk})
             added += len(chunk)
         except SpotifyApiError:
             failed.extend(chunk)
+    return added, failed
 
-    url = (created.get("external_urls") or {}).get("spotify") or f"https://open.spotify.com/playlist/{pid}"
-    return WriteResult(pid, url, added, failed)
+
+def playlist_exists(playlist_id: str, token: str) -> bool:
+    """True if the playlist is still there (it may have been deleted)."""
+    try:
+        _request("GET", f"/playlists/{urllib.parse.quote(playlist_id)}?fields=id", token)
+        return True
+    except SpotifyApiError as e:
+        if e.code == 404:
+            return False
+        raise  # a real error shouldn't silently trigger create-a-duplicate
+
+
+def playlist_track_uris(playlist_id: str, token: str) -> set[str]:
+    """All track uris already in a playlist (for the re-sync diff)."""
+    pid = urllib.parse.quote(playlist_id)
+    uris: set[str] = set()
+    offset = 0
+    while True:
+        q = urllib.parse.urlencode(
+            {"limit": _PAGE, "offset": offset, "fields": "total,items(track(uri))"}
+        )
+        page = _request("GET", f"/playlists/{pid}/tracks?{q}", token)
+        items = page.get("items") or []
+        for it in items:
+            u = (it.get("track") or {}).get("uri")
+            if u:
+                uris.add(u)
+        offset += len(items)
+        total = page.get("total")
+        if not items or (isinstance(total, int) and offset >= total):
+            return uris
+
+
+def add_to_playlist(playlist_id: str, uris: list[str], token: str) -> WriteResult:
+    """Add tracks to an existing playlist (the re-sync path)."""
+    added, failed = _add_tracks(playlist_id, uris, token)
+    return WriteResult(
+        playlist_id, f"https://open.spotify.com/playlist/{playlist_id}", added, failed
+    )

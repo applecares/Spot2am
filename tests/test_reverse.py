@@ -96,6 +96,68 @@ class AppleLinkTests(unittest.TestCase):
         self.assertIsNone(apple_read._iso_duration_ms("garbage"))
         self.assertIsNone(apple_read._iso_duration_ms(""))
 
+    def test_link_key_is_stable_across_link_variants(self):
+        self.assertEqual(
+            apple_read.link_key("https://music.apple.com/us/playlist/hits/pl.abc123?l=en"),
+            "pl.abc123",
+        )
+        self.assertEqual(
+            apple_read.link_key("https://music.apple.com/fr/album/nom-different/1440935467"),
+            "1440935467",
+        )
+        # the ?i= song form keys on the song, not its album
+        self.assertEqual(
+            apple_read.link_key("https://music.apple.com/us/album/x/1440935467?i=1440935802"),
+            "1440935802",
+        )
+
+
+class ResyncTests(unittest.TestCase):
+    """The re-sync diff: only songs not already in the destination get added."""
+
+    def test_spotify_playlist_track_uris_paginates(self):
+        pages = [
+            {"total": 150, "items": [{"track": {"uri": f"spotify:track:{i}"}} for i in range(100)]},
+            {"total": 150, "items": [{"track": {"uri": f"spotify:track:{i}"}} for i in range(100, 150)]},
+        ]
+
+        def fake(method, path, token, body=None, timeout=25):
+            return pages.pop(0)
+
+        orig = spotify_write._request
+        spotify_write._request = fake
+        try:
+            uris = spotify_write.playlist_track_uris("pid", "tok")
+        finally:
+            spotify_write._request = orig
+        self.assertEqual(len(uris), 150)
+        self.assertIn("spotify:track:149", uris)
+
+    def test_add_to_playlist_reports_added(self):
+        posted = []
+
+        def fake(method, path, token, body=None, timeout=25):
+            posted.append(body["uris"])
+            return {}
+
+        orig = spotify_write._request
+        spotify_write._request = fake
+        try:
+            r = spotify_write.add_to_playlist("pid", [f"u{i}" for i in range(150)], "tok")
+        finally:
+            spotify_write._request = orig
+        self.assertEqual(r.added, 150)
+        self.assertEqual([len(c) for c in posted], [100, 50])  # chunked at the API limit
+
+    def test_apple_catalog_ids_from_library_page(self):
+        from spot2am import applemusic
+        payload = {"data": [
+            {"attributes": {"playParams": {"catalogId": "111"}}},
+            {"attributes": {"playParams": {"catalogId": "222"}}},
+            {"attributes": {}},  # a row with no playParams is skipped
+        ]}
+        self.assertEqual(applemusic._catalog_ids(payload), {"111", "222"})
+
 
 class SpotifyWriteTests(unittest.TestCase):
     def test_normalize_search_shape(self):
