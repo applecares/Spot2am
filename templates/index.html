@@ -125,7 +125,7 @@
   ul.cands { list-style: none; margin: 8px 0 6px; padding: 0; }
   ul.cands li { display: block; padding: 0; border-bottom: 0; }
   ul.cands button { width: 100%; height: auto; padding: 8px 10px; font-weight: 400; font-size: 13px;
-    background: transparent; border: 0; border-radius: 8px; display: flex;
+    color: var(--fg); background: transparent; border: 0; border-radius: 8px; display: flex;
     justify-content: space-between; gap: 12px; text-align: left; }
   ul.cands button:hover { background: var(--surface-2); }
   .cand-artist { color: var(--muted); }
@@ -381,7 +381,9 @@ function toggleFixer(i) {
   fx = document.createElement("div"); fx.className = "fixer";
   const row = document.createElement("div"); row.className = "fixrow";
   const inp = document.createElement("input");
-  inp.type = "text"; inp.spellcheck = false; inp.value = `${t.title} ${t.artist}`;
+  inp.type = "text"; inp.spellcheck = false;
+  // lead artist only — the full comma list drowns the search
+  inp.value = `${t.title} ${(t.artist || "").split(",")[0].trim()}`;
   const go = document.createElement("button");
   go.type = "button"; go.className = "ghost"; go.textContent = "Search";
   row.append(inp, go);
