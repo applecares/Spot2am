@@ -21,7 +21,7 @@ from flask import Flask, Response, jsonify, render_template, request
 
 from spot2am import apple_read, applemusic, csvout, matcher, spotify_write
 from spot2am.apple_read import AppleReadError
-from spot2am.spotify import SpotifyReadError, parse_playlist_id, read_playlist
+from spot2am.spotify import SpotifyReadError, parse_link, read_link
 
 # Direction keys: "s2a" = Spotify -> Apple Music, "a2s" = Apple Music -> Spotify.
 
@@ -133,21 +133,23 @@ def convert():
     direction = "a2s" if body.get("direction") == "a2s" else "s2a"
     try:
         if direction == "a2s":
-            name, tracks, truncated = apple_read.read_playlist(url)
+            name, tracks, truncated = apple_read.read_link(url)
         else:
-            name, tracks, truncated = read_playlist(url)
+            name, tracks, truncated = read_link(url)
     except (SpotifyReadError, AppleReadError) as e:
         return jsonify(ok=False, error=str(e)), 400
 
     cfg = load_config()
     if direction == "s2a" and truncated and spotify_ready(cfg):
-        # The embed capped at 100 — the saved Spotify token can read the rest.
-        try:
-            name, tracks, truncated = spotify_write.read_playlist_full(
-                parse_playlist_id(url), cfg["spotify_token"]
-            )
-        except (spotify_write.SpotifyAuthError, spotify_write.SpotifyApiError):
-            pass  # keep the embed's first 100; the banner still flags the cap
+        kind, sid = parse_link(url)
+        if kind == "playlist":
+            # The embed capped at 100 — the saved Spotify token can read the rest.
+            try:
+                name, tracks, truncated = spotify_write.read_playlist_full(
+                    sid, cfg["spotify_token"]
+                )
+            except (spotify_write.SpotifyAuthError, spotify_write.SpotifyApiError):
+                pass  # keep the embed's first 100; the banner still flags the cap
 
     job_id = uuid.uuid4().hex[:8]
     JOBS[job_id] = {"name": name, "tracks": tracks, "direction": direction, "ids": [], "csv": None}

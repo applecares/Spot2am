@@ -147,7 +147,7 @@
 <div class="wrap">
   <header>
     <h1>spot<b>2am</b></h1>
-    <p>Move a playlist between Spotify and Apple Music. No login to read.</p>
+    <p>Move a playlist, album, or track between Spotify and Apple Music. No login to read.</p>
   </header>
 
   <div class="seg" id="dir" style="margin-top:16px">
@@ -157,7 +157,7 @@
 
   <div class="card" style="margin-top:12px">
     <div class="field">
-      <input id="url" type="text" placeholder="https://open.spotify.com/playlist/…"
+      <input id="url" type="text" placeholder="https://open.spotify.com/playlist/… (or album/track)"
              autocomplete="off" spellcheck="false" />
       <button id="go" class="primary">Convert</button>
     </div>
@@ -244,10 +244,10 @@ const IC = {
   spin: '<span class="spin"></span>',
 };
 const D = {
-  s2a: { placeholder: "https://open.spotify.com/playlist/…", dest: "Apple Music",
+  s2a: { placeholder: "https://open.spotify.com/playlist/… (or album/track)", dest: "Apple Music",
          add: "Add to Apple Music", open: "Open in Apple Music", find: "Apple Music",
          findUrl: (t) => "https://music.apple.com/search?term=" + encodeURIComponent(t) },
-  a2s: { placeholder: "https://music.apple.com/…/playlist/…", dest: "Spotify",
+  a2s: { placeholder: "https://music.apple.com/…/playlist/… (or album/song)", dest: "Spotify",
          add: "Add to Spotify", open: "Open in Spotify", find: "Spotify",
          findUrl: (t) => "https://open.spotify.com/search/" + encodeURIComponent(t) },
 };

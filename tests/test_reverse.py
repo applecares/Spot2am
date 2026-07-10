@@ -42,6 +42,61 @@ class AppleReadTests(unittest.TestCase):
             apple_read.parse_page("<html><body>no data</body></html>")
 
 
+ALBUM_HTML = APPLE_HTML.replace("pl.x", "1440935467")
+
+SONG_HTML = """
+<html><head>
+<script type="application/ld+json">
+{"@context":"http://schema.org","@type":"MusicComposition","name":"Welcome To New York",
+ "audio":{"@type":"MusicRecording","name":"Welcome To New York","duration":"PT3M32S",
+          "byArtist":[{"@type":"MusicGroup","name":"Taylor Swift"}]}}
+</script>
+</head><body></body></html>
+"""
+
+
+class AppleLinkTests(unittest.TestCase):
+    def test_parse_link_kinds(self):
+        pl = "https://music.apple.com/us/playlist/todays-hits/pl.abc123"
+        self.assertEqual(apple_read.parse_link(pl), ("playlist", pl, None))
+        al = "https://music.apple.com/us/album/global-warming/1440935467"
+        self.assertEqual(apple_read.parse_link(al), ("album", al, None))
+        sg = "https://music.apple.com/us/song/welcome-to-new-york/1440935802"
+        self.assertEqual(apple_read.parse_link(sg), ("song", sg, None))
+        # a song shared through its album page (?i=) is kind "song"
+        ai = "https://music.apple.com/us/album/welcome/1440935467?i=1440935802"
+        self.assertEqual(apple_read.parse_link(ai), ("song", ai, "1440935802"))
+
+    def test_album_missing_numeric_id_raises(self):
+        with self.assertRaises(apple_read.AppleReadError):
+            apple_read.parse_link("https://music.apple.com/us/album/name-only")
+
+    def test_album_page_parses_like_playlist(self):
+        name, tracks, truncated = apple_read.parse_page(ALBUM_HTML)
+        self.assertEqual(len(tracks), 2)
+        self.assertFalse(truncated)
+
+    def test_song_id_filter_picks_one_row(self):
+        _, tracks, _ = apple_read.parse_page(ALBUM_HTML, song_id="456")
+        self.assertEqual(len(tracks), 1)
+        self.assertEqual(tracks[0].title, "Song B")
+        _, none_found, _ = apple_read.parse_page(ALBUM_HTML, song_id="999")
+        self.assertEqual(none_found, [])
+
+    def test_song_page_ld_json(self):
+        name, tracks, truncated = apple_read.parse_song_page(SONG_HTML)
+        self.assertEqual(name, "Welcome To New York")
+        self.assertEqual(len(tracks), 1)
+        self.assertEqual(tracks[0].artist, "Taylor Swift")
+        self.assertEqual(tracks[0].duration_ms, 212000)
+        self.assertFalse(truncated)
+
+    def test_iso_duration(self):
+        self.assertEqual(apple_read._iso_duration_ms("PT1H2M3S"), 3723000)
+        self.assertIsNone(apple_read._iso_duration_ms("garbage"))
+        self.assertIsNone(apple_read._iso_duration_ms(""))
+
+
 class SpotifyWriteTests(unittest.TestCase):
     def test_normalize_search_shape(self):
         payload = {"tracks": {"items": [
