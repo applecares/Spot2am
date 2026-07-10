@@ -297,7 +297,9 @@ function startMatching(d) {
   $("#pl-name").textContent = d.name;
   $("#pl-count").textContent = canMatch ? `Matching 0/${d.count}` : `${d.count} tracks`;
   $("#trunc").hidden = !d.truncated;
-  if (d.truncated) $("#trunc").textContent = "First 100 tracks only — use TuneMyMusic for the rest.";
+  if (d.truncated) $("#trunc").textContent = spotifyReady
+    ? "First 100 tracks only — the saved Spotify token couldn't read the rest (it may have expired). Grab a fresh one in setup, or use TuneMyMusic."
+    : "First 100 tracks only — add a Spotify token in setup to read them all, or use TuneMyMusic for the rest.";
   $("#notoken").hidden = canMatch;
   if (!canMatch) $("#notoken").innerHTML =
     `Add a ${D[dir].dest} token in setup to match & create the playlist — or download the CSV for ` +

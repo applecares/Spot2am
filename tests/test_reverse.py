@@ -67,5 +67,56 @@ class SpotifyWriteTests(unittest.TestCase):
         self.assertEqual(spotify_write.normalize_search({}), [])
 
 
+class ReadPlaylistFullTests(unittest.TestCase):
+    """Full-playlist read over the official API (the 100-track-cap upgrade)."""
+
+    def _fake_request(self, pages):
+        calls = []
+
+        def fake(method, path, token, body=None, timeout=25):
+            calls.append(path)
+            if "?fields=name" in path:
+                return {"name": "Big Playlist"}
+            return pages.pop(0)
+
+        return fake, calls
+
+    def test_paginates_past_100(self):
+        item = lambda n: {"track": {"name": n, "uri": f"spotify:track:{n}",
+                                    "artists": [{"name": "A"}], "duration_ms": 1000}}
+        pages = [
+            {"total": 150, "items": [item(f"t{i}") for i in range(100)]},
+            {"total": 150, "items": [item(f"t{i}") for i in range(100, 150)]},
+        ]
+        fake, calls = self._fake_request(pages)
+        orig = spotify_write._request
+        spotify_write._request = fake
+        try:
+            name, tracks, truncated = spotify_write.read_playlist_full("pid123", "tok")
+        finally:
+            spotify_write._request = orig
+        self.assertEqual(name, "Big Playlist")
+        self.assertEqual(len(tracks), 150)
+        self.assertFalse(truncated)
+        self.assertEqual(tracks[-1].title, "t149")
+        self.assertEqual(len(calls), 3)  # name + two pages, no extra page fetch
+
+    def test_skips_local_and_removed_tracks(self):
+        pages = [{"total": 2, "items": [
+            {"track": {"name": "Real Song", "uri": "spotify:track:x",
+                       "artists": [{"name": "A"}, {"name": "B"}]}},
+            {"track": None},
+        ]}]
+        fake, _ = self._fake_request(pages)
+        orig = spotify_write._request
+        spotify_write._request = fake
+        try:
+            _, tracks, _ = spotify_write.read_playlist_full("pid", "tok")
+        finally:
+            spotify_write._request = orig
+        self.assertEqual(len(tracks), 1)
+        self.assertEqual(tracks[0].artist, "A, B")
+
+
 if __name__ == "__main__":
     unittest.main()

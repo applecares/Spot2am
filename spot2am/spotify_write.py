@@ -15,8 +15,11 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 
+from .spotify import Track
+
 API = "https://api.spotify.com/v1"
 _ADD_CHUNK = 100  # Spotify accepts up to 100 uris per add call
+_PAGE = 100  # max page size for playlist reads
 
 
 class SpotifyAuthError(Exception):
@@ -91,6 +94,54 @@ def searcher(token: str):
         return search(term, token)
 
     return s
+
+
+def read_playlist_full(playlist_id: str, token: str):
+    """Read a whole playlist via the official API — no 100-track embed cap.
+
+    Upgrades an embed read that hit the cap, when a token is saved. Returns
+    ``(name, [Track, ...], truncated=False)`` — the same shape as the no-login
+    readers, so the caller can swap the result in transparently."""
+    pid = urllib.parse.quote(playlist_id)
+    meta = _request("GET", f"/playlists/{pid}?fields=name", token)
+    name = meta.get("name") or "Spotify Playlist"
+
+    tracks: list[Track] = []
+    offset = 0
+    while True:
+        q = urllib.parse.urlencode(
+            {
+                "limit": _PAGE,
+                "offset": offset,
+                "fields": "total,items(track(name,uri,duration_ms,explicit,artists(name)))",
+            }
+        )
+        page = _request("GET", f"/playlists/{pid}/tracks?{q}", token)
+        items = page.get("items") or []
+        for it in items:
+            t = it.get("track") or {}
+            title = (t.get("name") or "").strip()
+            if not title:  # local files / removed tracks come back empty
+                continue
+            tracks.append(
+                Track(
+                    title=title,
+                    artist=", ".join(
+                        a.get("name", "") for a in (t.get("artists") or []) if a.get("name")
+                    ),
+                    duration_ms=t.get("duration_ms"),
+                    explicit=bool(t.get("explicit")),
+                    spotify_uri=t.get("uri"),
+                )
+            )
+        offset += len(items)
+        total = page.get("total")
+        if not items or (isinstance(total, int) and offset >= total):
+            break
+
+    if not tracks:
+        raise SpotifyApiError("The playlist appears to be empty.")
+    return name, tracks, False
 
 
 def _chunks(seq, n):
