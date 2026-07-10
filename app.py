@@ -87,6 +87,10 @@ def load_sync_map() -> dict:
 
 def save_sync_map(m: dict) -> None:
     SYNC_MAP_PATH.write_text(json.dumps(m, indent=2))
+    try:  # nothing secret in here, but keep local files owner-only like config.json
+        os.chmod(SYNC_MAP_PATH, 0o600)
+    except OSError:
+        pass
 
 
 def sync_key(direction: str, url: str) -> str | None:
@@ -362,8 +366,6 @@ def fixup_search():
                     "url": c.get("trackViewUrl"),
                 }
             )
-        if len(cands) >= 5:
-            break
     return jsonify(ok=True, candidates=cands[:8])
 
 
