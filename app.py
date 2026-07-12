@@ -21,13 +21,14 @@ from flask import Flask, Response, jsonify, render_template, request
 
 from spot2am import apple_read, applemusic, csvout, matcher, spotify_write
 from spot2am.apple_read import AppleReadError
-from spot2am.spotify import SpotifyReadError, read_playlist
+from spot2am.spotify import SpotifyReadError, parse_link, read_link
 
 # Direction keys: "s2a" = Spotify -> Apple Music, "a2s" = Apple Music -> Spotify.
 
 BASE = Path(__file__).resolve().parent
 EXPORTS = BASE / "exports"
 CONFIG_PATH = BASE / "config.json"
+SYNC_MAP_PATH = BASE / "sync_map.json"  # source link -> playlist we created (gitignored)
 EXPORTS.mkdir(exist_ok=True)
 
 app = Flask(__name__)
@@ -73,6 +74,35 @@ def save_config(cfg: dict) -> None:
         os.chmod(CONFIG_PATH, 0o600)
     except OSError:
         pass
+
+
+def load_sync_map() -> dict:
+    if SYNC_MAP_PATH.exists():
+        try:
+            return json.loads(SYNC_MAP_PATH.read_text())
+        except ValueError:
+            pass
+    return {}
+
+
+def save_sync_map(m: dict) -> None:
+    SYNC_MAP_PATH.write_text(json.dumps(m, indent=2))
+    try:  # nothing secret in here, but keep local files owner-only like config.json
+        os.chmod(SYNC_MAP_PATH, 0o600)
+    except OSError:
+        pass
+
+
+def sync_key(direction: str, url: str) -> str | None:
+    """Stable ``direction:source-id`` key, or None when the url can't be keyed
+    (never the case after a successful read — this is belt-and-braces)."""
+    try:
+        if direction == "a2s":
+            return f"a2s:{apple_read.link_key(url)}"
+        kind, sid = parse_link(url)
+        return f"s2a:{kind}:{sid}"
+    except (SpotifyReadError, AppleReadError):
+        return None
 
 
 def apple_ready(cfg: dict | None = None) -> bool:
@@ -133,15 +163,33 @@ def convert():
     direction = "a2s" if body.get("direction") == "a2s" else "s2a"
     try:
         if direction == "a2s":
-            name, tracks, truncated = apple_read.read_playlist(url)
+            name, tracks, truncated = apple_read.read_link(url)
         else:
-            name, tracks, truncated = read_playlist(url)
+            name, tracks, truncated = read_link(url)
     except (SpotifyReadError, AppleReadError) as e:
         return jsonify(ok=False, error=str(e)), 400
 
-    job_id = uuid.uuid4().hex[:8]
-    JOBS[job_id] = {"name": name, "tracks": tracks, "direction": direction, "ids": [], "csv": None}
     cfg = load_config()
+    if direction == "s2a" and truncated and spotify_ready(cfg):
+        kind, sid = parse_link(url)
+        if kind == "playlist":
+            # The embed capped at 100 — the saved Spotify token can read the rest.
+            try:
+                name, tracks, truncated = spotify_write.read_playlist_full(
+                    sid, cfg["spotify_token"]
+                )
+            except (spotify_write.SpotifyAuthError, spotify_write.SpotifyApiError):
+                pass  # keep the embed's first 100; the banner still flags the cap
+
+    job_id = uuid.uuid4().hex[:8]
+    JOBS[job_id] = {
+        "name": name,
+        "tracks": tracks,
+        "direction": direction,
+        "sync_key": sync_key(direction, url),
+        "ids": [],
+        "csv": None,
+    }
     return jsonify(
         ok=True,
         job_id=job_id,
@@ -169,7 +217,7 @@ def stream(job_id):
     searchers = build_searchers(cfg, direction)
 
     def events():
-        rows = []
+        rows = job["rows"] = []  # kept on the job so manual fix-ups can edit them
         for i, track in enumerate(job["tracks"]):
             m = matcher.match_track(track, searchers) if searchers else matcher.NO_MATCH
             rows.append((track, m))
@@ -231,29 +279,133 @@ def push():
         return jsonify(ok=False, error="No matched songs to add."), 400
 
     cfg = load_config()
+    key = job.get("sync_key")
+    smap = load_sync_map()
+    prior = smap.get(key) if key else None
+    updated, already = False, 0
     try:
         if job.get("direction") == "a2s":
-            r = spotify_write.create_playlist(
-                name=job["name"],
-                description="Imported from Apple Music by spot2am",
-                uris=job["ids"],
-                token=cfg["spotify_token"],
-            )
+            token = cfg["spotify_token"]
+            if prior and spotify_write.playlist_exists(prior["playlist_id"], token):
+                # Re-sync: same source pushed before — add only what's missing.
+                existing = spotify_write.playlist_track_uris(prior["playlist_id"], token)
+                new = [u for u in job["ids"] if u not in existing]
+                already = len(job["ids"]) - len(new)
+                r = spotify_write.add_to_playlist(prior["playlist_id"], new, token)
+                updated = True
+            else:
+                r = spotify_write.create_playlist(
+                    name=job["name"],
+                    description="Imported from Apple Music by spot2am",
+                    uris=job["ids"],
+                    token=token,
+                )
             failed = len(r.failed)
         else:
-            r = applemusic.create_playlist(
-                name=job["name"],
-                description="Imported from Spotify by spot2am",
-                apple_ids=job["ids"],
-                bearer=cfg["bearer"],
-                user_token=cfg["media_user_token"],
-            )
+            bearer, mut = cfg["bearer"], cfg["media_user_token"]
+            if prior and applemusic.playlist_exists(prior["playlist_id"], bearer, mut):
+                existing = applemusic.playlist_catalog_ids(prior["playlist_id"], bearer, mut)
+                new = [i for i in job["ids"] if i not in existing]
+                already = len(job["ids"]) - len(new)
+                r = applemusic.add_to_playlist(prior["playlist_id"], new, bearer, mut)
+                updated = True
+            else:
+                r = applemusic.create_playlist(
+                    name=job["name"],
+                    description="Imported from Spotify by spot2am",
+                    apple_ids=job["ids"],
+                    bearer=bearer,
+                    user_token=mut,
+                )
             failed = len(r.failed_ids)
     except (applemusic.AppleAuthError, applemusic.AppleApiError,
             spotify_write.SpotifyAuthError, spotify_write.SpotifyApiError) as e:
         return jsonify(ok=False, error=str(e)), 400
 
-    return jsonify(ok=True, added=r.added, failed=failed, playlist_url=r.playlist_url)
+    if key:  # remember where this source landed, so a re-run updates in place
+        smap[key] = {"playlist_id": r.playlist_id, "playlist_url": r.playlist_url, "name": job["name"]}
+        save_sync_map(smap)
+
+    return jsonify(
+        ok=True, added=r.added, failed=failed, updated=updated, already=already,
+        playlist_url=r.playlist_url,
+    )
+
+
+@app.post("/fixup/search")
+def fixup_search():
+    """Manual fix-up, step 1: search candidates for a row the matcher missed."""
+    body = request.json or {}
+    job = JOBS.get(body.get("job_id", ""))
+    if not job:
+        return jsonify(ok=False, error="That conversion expired — run it again."), 400
+    term = (body.get("term") or "").strip()
+    if not term:
+        return jsonify(ok=False, error="Type something to search for."), 400
+    searchers = build_searchers(load_config(), job.get("direction", "s2a"))
+    if not searchers:
+        return jsonify(ok=False, error="Add a token in Settings to search."), 400
+
+    cands, seen = [], set()
+    for search in searchers:
+        try:
+            results = search(term)
+        except Exception:  # throttled / auth / network — try the next source
+            continue
+        for c in results:
+            cid = str(c.get("trackId") or "")
+            if not cid or cid in seen:
+                continue
+            seen.add(cid)
+            cands.append(
+                {
+                    "id": cid,
+                    "name": c.get("trackName"),
+                    "artist": c.get("artistName"),
+                    "duration_ms": c.get("trackTimeMillis"),
+                    "url": c.get("trackViewUrl"),
+                }
+            )
+    return jsonify(ok=True, candidates=cands[:8])
+
+
+@app.post("/fixup/choose")
+def fixup_choose():
+    """Manual fix-up, step 2: pin a candidate to a row and refresh ids + CSV."""
+    body = request.json or {}
+    job = JOBS.get(body.get("job_id", ""))
+    if not job:
+        return jsonify(ok=False, error="That conversion expired — run it again."), 400
+    try:
+        i = int(body.get("i"))
+    except (TypeError, ValueError):
+        i = -1
+    rows = job.get("rows") or []
+    if not (0 <= i < len(rows)):
+        return jsonify(ok=False, error="That row isn't matched yet — give it a second."), 400
+    cid = str(body.get("id") or "").strip()
+    if not cid:
+        return jsonify(ok=False, error="No song selected."), 400
+
+    track, _ = rows[i]
+    m = matcher.Match(
+        apple_id=cid,
+        apple_name=(body.get("name") or "").strip() or None,
+        apple_artist=(body.get("artist") or "").strip() or None,
+        apple_url=(body.get("url") or "").strip() or None,
+        confidence=1.0,  # picked by hand
+    )
+    rows[i] = (track, m)
+    job["ids"] = [mm.apple_id for _, mm in rows if mm.matched]
+    if job.get("csv"):  # the failsafe CSV reflects the fix too
+        (EXPORTS / job["csv"]).write_text(csvout.to_csv(rows), encoding="utf-8")
+    return jsonify(
+        ok=True,
+        matched=sum(1 for _, mm in rows if mm.matched),
+        total=len(job["tracks"]),
+        name=m.apple_name,
+        artist=m.apple_artist,
+    )
 
 
 @app.post("/settings")

@@ -15,8 +15,11 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 
+from .spotify import Track
+
 API = "https://api.spotify.com/v1"
 _ADD_CHUNK = 100  # Spotify accepts up to 100 uris per add call
+_PAGE = 100  # max page size for playlist reads
 
 
 class SpotifyAuthError(Exception):
@@ -25,6 +28,10 @@ class SpotifyAuthError(Exception):
 
 class SpotifyApiError(Exception):
     """Spotify refused the request. Message is safe to show."""
+
+    def __init__(self, message: str, code: int | None = None):
+        super().__init__(message)
+        self.code = code  # HTTP status, when there was one
 
 
 @dataclass
@@ -57,7 +64,7 @@ def _request(method: str, path: str, token: str, body: dict | None = None, timeo
                 "Spotify rejected the token (web tokens expire about hourly). Grab a "
                 "fresh one from open.spotify.com and save it again."
             ) from e
-        raise SpotifyApiError(f"Spotify error {e.code}: {detail}") from e
+        raise SpotifyApiError(f"Spotify error {e.code}: {detail}", code=e.code) from e
     except Exception as e:
         raise SpotifyApiError(f"Couldn't reach Spotify ({e}).") from e
 
@@ -93,6 +100,54 @@ def searcher(token: str):
     return s
 
 
+def read_playlist_full(playlist_id: str, token: str):
+    """Read a whole playlist via the official API — no 100-track embed cap.
+
+    Upgrades an embed read that hit the cap, when a token is saved. Returns
+    ``(name, [Track, ...], truncated=False)`` — the same shape as the no-login
+    readers, so the caller can swap the result in transparently."""
+    pid = urllib.parse.quote(playlist_id)
+    meta = _request("GET", f"/playlists/{pid}?fields=name", token)
+    name = meta.get("name") or "Spotify Playlist"
+
+    tracks: list[Track] = []
+    offset = 0
+    while True:
+        q = urllib.parse.urlencode(
+            {
+                "limit": _PAGE,
+                "offset": offset,
+                "fields": "total,items(track(name,uri,duration_ms,explicit,artists(name)))",
+            }
+        )
+        page = _request("GET", f"/playlists/{pid}/tracks?{q}", token)
+        items = page.get("items") or []
+        for it in items:
+            t = it.get("track") or {}
+            title = (t.get("name") or "").strip()
+            if not title:  # local files / removed tracks come back empty
+                continue
+            tracks.append(
+                Track(
+                    title=title,
+                    artist=", ".join(
+                        a.get("name", "") for a in (t.get("artists") or []) if a.get("name")
+                    ),
+                    duration_ms=t.get("duration_ms"),
+                    explicit=bool(t.get("explicit")),
+                    spotify_uri=t.get("uri"),
+                )
+            )
+        offset += len(items)
+        total = page.get("total")
+        if not items or (isinstance(total, int) and offset >= total):
+            break
+
+    if not tracks:
+        raise SpotifyApiError("The playlist appears to be empty.")
+    return name, tracks, False
+
+
 def _chunks(seq, n):
     for i in range(0, len(seq), n):
         yield seq[i : i + n]
@@ -118,13 +173,57 @@ def create_playlist(name: str, description: str, uris: list[str], token: str) ->
     if not pid:
         raise SpotifyApiError("Spotify didn't return a playlist id.")
 
+    added, failed = _add_tracks(pid, uris, token)
+    url = (created.get("external_urls") or {}).get("spotify") or f"https://open.spotify.com/playlist/{pid}"
+    return WriteResult(pid, url, added, failed)
+
+
+def _add_tracks(playlist_id: str, uris: list[str], token: str) -> tuple[int, list]:
     added, failed = 0, []
     for chunk in _chunks(uris, _ADD_CHUNK):
         try:
-            _request("POST", f"/playlists/{pid}/tracks", token, {"uris": chunk})
+            _request("POST", f"/playlists/{playlist_id}/tracks", token, {"uris": chunk})
             added += len(chunk)
         except SpotifyApiError:
             failed.extend(chunk)
+    return added, failed
 
-    url = (created.get("external_urls") or {}).get("spotify") or f"https://open.spotify.com/playlist/{pid}"
-    return WriteResult(pid, url, added, failed)
+
+def playlist_exists(playlist_id: str, token: str) -> bool:
+    """True if the playlist is still there (it may have been deleted)."""
+    try:
+        _request("GET", f"/playlists/{urllib.parse.quote(playlist_id)}?fields=id", token)
+        return True
+    except SpotifyApiError as e:
+        if e.code == 404:
+            return False
+        raise  # a real error shouldn't silently trigger create-a-duplicate
+
+
+def playlist_track_uris(playlist_id: str, token: str) -> set[str]:
+    """All track uris already in a playlist (for the re-sync diff)."""
+    pid = urllib.parse.quote(playlist_id)
+    uris: set[str] = set()
+    offset = 0
+    while True:
+        q = urllib.parse.urlencode(
+            {"limit": _PAGE, "offset": offset, "fields": "total,items(track(uri))"}
+        )
+        page = _request("GET", f"/playlists/{pid}/tracks?{q}", token)
+        items = page.get("items") or []
+        for it in items:
+            u = (it.get("track") or {}).get("uri")
+            if u:
+                uris.add(u)
+        offset += len(items)
+        total = page.get("total")
+        if not items or (isinstance(total, int) and offset >= total):
+            return uris
+
+
+def add_to_playlist(playlist_id: str, uris: list[str], token: str) -> WriteResult:
+    """Add tracks to an existing playlist (the re-sync path)."""
+    added, failed = _add_tracks(playlist_id, uris, token)
+    return WriteResult(
+        playlist_id, f"https://open.spotify.com/playlist/{playlist_id}", added, failed
+    )

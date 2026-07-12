@@ -31,6 +31,10 @@ class AppleAuthError(Exception):
 class AppleApiError(Exception):
     """The Apple endpoint refused the request. Message is safe to show."""
 
+    def __init__(self, message: str, code: int | None = None):
+        super().__init__(message)
+        self.code = code  # HTTP status, when there was one
+
 
 @dataclass
 class PushResult:
@@ -65,7 +69,7 @@ def _request(method: str, path: str, headers: dict, body: dict | None = None) ->
                 "Apple Music rejected your tokens (they expire every so often). "
                 "Re-grab both tokens from music.apple.com and save them again."
             ) from e
-        raise AppleApiError(f"Apple Music error {e.code}: {detail}") from e
+        raise AppleApiError(f"Apple Music error {e.code}: {detail}", code=e.code) from e
     except Exception as e:
         raise AppleApiError(f"Couldn't reach Apple Music ({e}).") from e
 
@@ -121,25 +125,7 @@ def _chunks(seq, n):
         yield seq[i : i + n]
 
 
-def create_playlist(
-    name: str, description: str, apple_ids: list[str], bearer: str, user_token: str
-) -> PushResult:
-    """Create a library playlist and add the given catalog song ids to it."""
-    if not bearer or not user_token:
-        raise AppleAuthError("Apple Music tokens aren't set. Open Settings to add them.")
-
-    headers = _headers(bearer, user_token)
-    created = _request(
-        "POST",
-        "/v1/me/library/playlists",
-        headers,
-        {"attributes": {"name": name, "description": description}},
-    )
-    try:
-        playlist_id = created["data"][0]["id"]
-    except (KeyError, IndexError) as e:
-        raise AppleApiError("Apple Music didn't return a playlist id.") from e
-
+def _add_tracks(playlist_id: str, apple_ids: list[str], headers: dict) -> tuple[int, list[str]]:
     added, failed = 0, []
     for chunk in _chunks(apple_ids, _ADD_CHUNK):
         payload = {"data": [{"id": i, "type": "songs"} for i in chunk]}
@@ -164,7 +150,89 @@ def create_playlist(
                     added += 1
                 except AppleApiError:
                     failed.append(one)
+    return added, failed
 
+
+def create_playlist(
+    name: str, description: str, apple_ids: list[str], bearer: str, user_token: str
+) -> PushResult:
+    """Create a library playlist and add the given catalog song ids to it."""
+    if not bearer or not user_token:
+        raise AppleAuthError("Apple Music tokens aren't set. Open Settings to add them.")
+
+    headers = _headers(bearer, user_token)
+    created = _request(
+        "POST",
+        "/v1/me/library/playlists",
+        headers,
+        {"attributes": {"name": name, "description": description}},
+    )
+    try:
+        playlist_id = created["data"][0]["id"]
+    except (KeyError, IndexError) as e:
+        raise AppleApiError("Apple Music didn't return a playlist id.") from e
+
+    added, failed = _add_tracks(playlist_id, apple_ids, headers)
+    return PushResult(
+        playlist_id=playlist_id,
+        playlist_url=f"{_ORIGIN}/library/playlist/{playlist_id}",
+        added=added,
+        failed_ids=failed,
+    )
+
+
+def playlist_exists(playlist_id: str, bearer: str, user_token: str) -> bool:
+    """True if the library playlist is still there (it may have been deleted)."""
+    try:
+        _request(
+            "GET",
+            f"/v1/me/library/playlists/{urllib.parse.quote(playlist_id)}",
+            _headers(bearer, user_token),
+        )
+        return True
+    except AppleApiError as e:
+        if e.code == 404:
+            return False
+        raise  # a real error shouldn't silently trigger create-a-duplicate
+
+
+def _catalog_ids(payload: dict) -> set[str]:
+    """Catalog song ids out of a library-playlist /tracks page."""
+    out = set()
+    for item in (payload or {}).get("data") or []:
+        cid = ((item.get("attributes") or {}).get("playParams") or {}).get("catalogId")
+        if cid:
+            out.add(str(cid))
+    return out
+
+
+def playlist_catalog_ids(playlist_id: str, bearer: str, user_token: str) -> set[str]:
+    """All catalog song ids already in a library playlist (for the re-sync diff)."""
+    headers = _headers(bearer, user_token)
+    pid = urllib.parse.quote(playlist_id)
+    ids: set[str] = set()
+    offset = 0
+    while True:
+        try:
+            j = _request(
+                "GET", f"/v1/me/library/playlists/{pid}/tracks?limit=100&offset={offset}", headers
+            )
+        except AppleApiError as e:
+            if e.code == 404 and offset == 0:
+                return set()  # Apple 404s the tracks relationship of an empty playlist
+            raise
+        data = j.get("data") or []
+        ids |= _catalog_ids(j)
+        offset += len(data)
+        if not data or not j.get("next"):
+            return ids
+
+
+def add_to_playlist(
+    playlist_id: str, apple_ids: list[str], bearer: str, user_token: str
+) -> PushResult:
+    """Add songs to an existing library playlist (the re-sync path)."""
+    added, failed = _add_tracks(playlist_id, apple_ids, _headers(bearer, user_token))
     return PushResult(
         playlist_id=playlist_id,
         playlist_url=f"{_ORIGIN}/library/playlist/{playlist_id}",
